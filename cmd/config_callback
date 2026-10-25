@@ -1,0 +1,7 @@
+#!/bin/bash
+APPDEST="${TRIM_APPDEST:-/var/apps/proxyhub/target}"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/proxyhub/var}"
+"$APPDEST/bin/proxyhub" -app "$APPDEST" -data "$PKGVAR" -apply-wizard >> "$PKGVAR/install.log" 2>&1
+"$APPDEST/cmd/main" stop >/dev/null 2>&1
+"$APPDEST/cmd/main" start >/dev/null 2>&1
+exit 0

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>代理中心</title>
+<link rel="stylesheet" href="app.css?v={{V}}">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">P</span><div><h1>代理中心</h1><p>mihomo 内核 · 订阅自动更新</p></div></div>
+  <div class="actions">
+    <span id="pill" class="pill"><i></i><span>连接中…</span></span>
+    <button id="btn-restart" class="btn">重启内核</button>
+  </div>
+</header>
+<main>
+  <section class="card">
+    <h2>运行状态</h2>
+    <div class="grid">
+      <div class="stat"><span class="label">内核</span><b id="s-core">—</b><span class="note" id="s-core-note">—</span></div>
+      <div class="stat"><span class="label">混合端口</span><b id="s-port">—</b><span class="note" id="s-mode">—</span></div>
+      <div class="stat"><span class="label">订阅更新</span><b id="s-update">—</b><span class="note" id="s-sub">未配置</span></div>
+    </div>
+    <div class="row">
+      <label class="grow">当前节点
+        <select id="node-select"><option value="">加载中…</option></select>
+      </label>
+      <button id="btn-delay" class="btn">测速</button>
+    </div>
+    <p class="hint" id="delay-note"></p>
+    <div class="row">
+      <span class="hint" style="margin:0">内核版本 <b id="core-current">—</b> · 最新 <b id="core-latest">—</b></span>
+      <button id="btn-core-update" class="btn">更新内核</button>
+    </div>
+    <p class="hint" id="core-note"></p>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>PAC 代理</h2><button id="btn-pac-update" class="btn ghost">更新 PAC</button></div>
+    <p class="hint" style="margin-top:0">基于 gfwlist 自动生成，按域名分流：命中规则走代理，其余直连。</p>
+    <div class="row">
+      <label class="grow">PAC 地址
+        <input id="pac-url" readonly>
+      </label>
+      <button id="btn-pac-copy" class="btn">复制</button>
+    </div>
+    <p class="hint" id="pac-note"></p>
+  </section>
+
+  <section class="card">
+    <h2>订阅</h2>
+    <div class="row"><label class="grow">订阅链接<input id="sub-url" placeholder="https://example.com/api/v1/client/subscribe?token=..."></label></div>
+    <div class="row">
+      <label>更新间隔（小时）<input id="sub-hours" type="number" min="1" max="168"></label>
+      <label class="switch-field"><input id="auto-update" type="checkbox"><span class="track"></span><span>自动更新</span></label>
+    </div>
+    <div class="row">
+      <button id="btn-save-sub" class="btn primary">保存并更新</button>
+      <button id="btn-update" class="btn">立即更新</button>
+    </div>
+    <p class="hint" id="sub-note"></p>
+  </section>
+
+  <section class="card">
+    <h2>运行设置</h2>
+    <div class="row">
+      <label>混合端口<input id="mixed-port" type="number" min="1" max="65535"></label>
+      <label>模式<select id="mode"><option value="rule">规则</option><option value="global">全局</option><option value="direct">直连</option></select></label>
+      <label>日志级别<select id="log-level"><option>info</option><option>warning</option><option>error</option><option>debug</option><option>silent</option></select></label>
+      <label class="switch-field"><input id="allow-lan" type="checkbox"><span class="track"></span><span>允许局域网</span></label>
+      <label>PAC 主机<input id="pac-host" placeholder="留空自动检测局域网 IP"></label>
+    </div>
+    <div class="row"><button id="btn-save" class="btn primary">保存设置</button></div>
+    <p class="hint" id="set-note"></p>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2>日志</h2><button id="btn-logs" class="btn ghost">刷新</button></div>
+    <pre class="logs" id="logs"></pre>
+  </section>
+</main>
+<div id="toast" class="toast"></div>
+<script src="app.js?v={{V}}"></script>
+</body>
+</html>

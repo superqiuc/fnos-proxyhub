@@ -1,0 +1,9 @@
+# 构建产物
+dist/
+.tmp/
+app/bin/
+*.fpk
+*.sha256
+
+# 内核
+.cache/

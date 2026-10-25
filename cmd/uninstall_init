@@ -1,0 +1,4 @@
+#!/bin/bash
+APPDEST="${TRIM_APPDEST:-/var/apps/proxyhub/target}"
+[ -x "$APPDEST/cmd/main" ] && "$APPDEST/cmd/main" stop >/dev/null 2>&1
+exit 0

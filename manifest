@@ -1,0 +1,16 @@
+appname               = proxyhub
+version               = 1.1.0
+display_name          = 代理中心
+desc                  = 运行在飞牛 fnOS 上的 mihomo 代理管理应用，界面精简。<br>填写机场订阅链接即可自动拉取节点与规则，按间隔自动更新，失败保留旧配置。<br>支持节点切换、端口/模式/日志级别调整、内核重启，配置与订阅只保存在本机应用数据目录。
+platform              = x86
+source                = thirdparty
+maintainer            = superqiuc
+maintainer_url        = https://github.com/MetaCubeX/mihomo
+distributor           = superqiuc
+os_min_version        = 1.1.8
+desktop_uidir         = ui
+desktop_applaunchname = proxyhub.main
+ctl_stop              = true
+service_port          = 8898
+checkport             = true
+changelog             = v1.1.0 新增 gfwlist PAC：内置 4162 条规则快照、启动不联网、按域名分流、PAC 地址用内网 IP 并支持手动指定主机；内核更新改为通过当前代理下载，不再依赖镜像；页面禁用缓存。 | v1.0.0 首个公开版本：订阅自动拉取、节点切换、节点测速、内核更新、日志查看。

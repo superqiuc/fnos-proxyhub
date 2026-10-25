@@ -1,0 +1,16 @@
+#!/bin/bash
+set -u
+APPNAME="proxyhub"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/$APPNAME/var}"
+APPDEST="${TRIM_APPDEST:-/var/apps/$APPNAME/target}"
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$PKGVAR/info.log" 2>/dev/null; }
+fail() { log "ERROR: $1"; [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$1" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null; exit 1; }
+mkdir -p "$PKGVAR" 2>/dev/null || fail "无法创建数据目录"
+chmod 755 "$APPDEST"/cmd/* "$APPDEST"/bin/* 2>/dev/null
+"$APPDEST/bin/proxyhub" -app "$APPDEST" -data "$PKGVAR" -apply-wizard >> "$PKGVAR/install.log" 2>&1 || fail "初始配置写入失败"
+if [ "$(id -u)" = "0" ] && [ -n "${TRIM_USERNAME:-}" ]; then
+    chown -R "$TRIM_USERNAME:${TRIM_GROUPNAME:-$TRIM_USERNAME}" "$PKGVAR" 2>/dev/null
+fi
+chmod 700 "$PKGVAR" 2>/dev/null
+log "安装完成"
+exit 0

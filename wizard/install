@@ -1,0 +1,25 @@
+[
+  {
+    "stepTitle": "代理订阅",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "填写机场提供的 Clash / Mihomo 订阅链接，安装后会立即拉取一次。<br>订阅只保存在本机应用数据目录。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_subscription_url",
+        "label": "订阅链接",
+        "initValue": "",
+        "rules": [ { "pattern": "^(https?://.+)?$", "message": "请填写 http:// 或 https:// 开头的链接" } ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_mixed_port",
+        "label": "代理端口（默认 7890，避免与旧应用冲突可改）",
+        "initValue": "7890",
+        "rules": [ { "pattern": "^[0-9]+$", "message": "请填写端口号" } ]
+      }
+    ]
+  }
+]
