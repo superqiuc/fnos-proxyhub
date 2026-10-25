@@ -1,0 +1,48 @@
+#!/bin/bash
+set -u
+APPNAME="proxyhub"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/$APPNAME/var}"
+APPDEST="${TRIM_APPDEST:-/var/apps/$APPNAME/target}"
+PORT="${TRIM_SERVICE_PORT:-8898}"
+BIN="$APPDEST/bin/proxyhub"
+PID_FILE="$PKGVAR/proxyhub.pid"
+INFO_LOG="$PKGVAR/info.log"
+mkdir -p "$PKGVAR" 2>/dev/null
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$INFO_LOG" 2>/dev/null; }
+fail() { log "ERROR: $1"; [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$1" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null; return 1; }
+pid_of() { [ -f "$PID_FILE" ] && head -n 1 "$PID_FILE" 2>/dev/null | tr -dc '0-9'; }
+port_ready() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1; }
+is_running() { local pid; pid=$(pid_of); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
+start_process() {
+    if is_running; then log "已在运行"; return 0; fi
+    rm -f "$PID_FILE"
+    [ -x "$BIN" ] || { fail "缺少可执行文件"; return 1; }
+    log "启动代理中心，端口 $PORT"
+    nohup "$BIN" -app "$APPDEST" -data "$PKGVAR" -listen "$PORT" >> "$PKGVAR/proxyhub.out" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+    local i=0
+    while [ "$i" -lt 60 ]; do
+        sleep 0.5
+        if ! kill -0 "$pid" 2>/dev/null; then rm -f "$PID_FILE"; fail "进程退出，请查看 $PKGVAR/proxyhub.out"; return 1; fi
+        if port_ready "$PORT"; then log "启动成功 (pid=$pid)"; return 0; fi
+        i=$((i + 1))
+    done
+    log "WARN: 30 秒内端口未就绪"; return 0
+}
+stop_process() {
+    local pid; pid=$(pid_of)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill -TERM "$pid" 2>/dev/null
+        local i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 40 ]; do sleep 0.5; i=$((i+1)); done
+        kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+    fi
+    pkill -f "$APPDEST/bin/mihomo -d" 2>/dev/null
+    rm -f "$PID_FILE"; log "已停止"; return 0
+}
+case "${1:-}" in
+    start) start_process || exit 1; exit 0 ;;
+    stop) stop_process || exit 1; exit 0 ;;
+    status) is_running && exit 0; exit 3 ;;
+    *) exit 1 ;;
+esac
