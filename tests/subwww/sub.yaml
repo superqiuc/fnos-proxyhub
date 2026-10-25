@@ -1,0 +1,3 @@
+proxies: [{"name":"节点A","type":"socks5","server":"127.0.0.1","port":1080},{"name":"节点B","type":"socks5","server":"127.0.0.1","port":1081}]
+proxy-groups: [{"name":"FastFly","type":"select","proxies":["节点A","节点B"]}]
+rules: ["MATCH,FastFly"]

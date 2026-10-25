@@ -1,0 +1,18 @@
+[
+  {
+    "stepTitle": "订阅设置",
+    "items": [
+      {
+        "type": "text",
+        "field": "wizard_subscription_url",
+        "label": "订阅链接",
+        "initValue": "",
+        "rules": [ { "pattern": "^(https?://.+)?$", "message": "请填写 http:// 或 https:// 开头的链接" } ]
+      },
+      {
+        "type": "tips",
+        "helpText": "节点切换、端口、模式等请在应用页面里调整。"
+      }
+    ]
+  }
+]
