@@ -1,0 +1,11 @@
+proxies:
+  - name: "测试节点"
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies: ["测试节点", "DIRECT"]
+rules:
+  - MATCH,PROXY

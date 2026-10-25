@@ -1,0 +1,16 @@
+appname               = proxyhub
+version               = 1.1.1
+display_name          = 代理中心
+desc                  = 运行在飞牛 fnOS 上的 mihomo 代理管理应用，界面精简。<br>填写机场订阅链接即可自动拉取节点与规则，按间隔自动更新，失败保留旧配置。<br>支持节点切换、端口/模式/日志级别调整、内核重启，配置与订阅只保存在本机应用数据目录。
+platform              = x86
+source                = thirdparty
+maintainer            = superqiuc
+maintainer_url        = https://github.com/MetaCubeX/mihomo
+distributor           = superqiuc
+os_min_version        = 1.1.8
+desktop_uidir         = ui
+desktop_applaunchname = proxyhub.main
+ctl_stop              = true
+service_port          = 8898
+checkport             = true
+changelog             = v1.1.1 新增「启用 IPv6」开关，写入 config.yaml 的 ipv6 项；开启后内核解析 AAAA 并支持 IPv6 出站。 | v1.1.0 新增 gfwlist PAC、PAC 主机配置、内核更新走代理。 | v1.0.0 首个公开版本。
