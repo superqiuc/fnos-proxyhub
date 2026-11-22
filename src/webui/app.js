@@ -227,7 +227,7 @@
 
   async function updateSub() {
     var btn = $('btn-update'); btn.disabled = true; btn.textContent = '更新中…';
-    $('sub-note').textContent = '正在下载订阅并校验…';
+    $('sub-note').textContent = '正在下载订阅并校验（首次可能需要下载地理数据，请稍候）…';
     try {
       var d = await api('subscription/update', { method: 'POST' });
       $('sub-note').textContent = '更新成功，节点数约 ' + d.nodes + '。';

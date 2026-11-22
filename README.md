@@ -17,15 +17,26 @@
 - **运行设置**：混合端口、控制器端口、运行模式、日志级别、允许局域网
 - **日志查看**：应用日志与内核日志
 - **PAC 分流**：基于 gfwlist 自动生成 PAC，按域名分流（命中走代理，其余直连）
+- **卸载清理**：卸载时可选择保留数据，或删除订阅、设置、PAC 规则与日志
 
 ## 安装
 
-1. 下载 `proxyhub-1.3.0-x86.fpk`
+1. 下载 `proxyhub-1.4.0-x86.fpk`
 2. 飞牛应用中心 → 手动安装
 3. 打开「代理中心」→ 设置订阅链接 → 保存
 4. 首次会自动拉取订阅并启动内核
 
-> 包内已内置 mihomo 内核；如需更新，可在「运行状态」卡片点「更新内核」。
+> 包内已内置 mihomo **v1.19.34** 内核，以及 `Country.mmdb` / `GeoSite.dat` / `GeoIP.dat` 地理数据；首次启动直接复制到应用数据目录，无需联网下载。缺失或损坏时才自动从镜像重新拉取。
+> 如需更新内核，可在「运行状态」卡片点「更新内核」。
+
+## 数据与卸载
+
+- 应用数据保存在飞牛应用数据目录，包含订阅链接、节点配置、生成的 `config.yaml`、PAC 规则、日志与内核备份。
+- 地理数据优先使用安装包内置的 `Country.mmdb` / `GeoSite.dat` / `GeoIP.dat`，首次启动复制到数据目录。
+- 在应用中心卸载时会弹出向导：
+  - **保留数据（默认）**：重装后订阅与设置自动恢复。
+  - **删除所有数据**：删除上述全部数据，不可恢复。
+- 删除操作通过 `cmd/uninstall_callback` 执行，并校验目标路径必须是本应用数据目录。
 
 ## 配置
 
@@ -49,17 +60,27 @@
 
 ## 构建
 
-需要 Go 1.24+ 和一个 mihomo 内核二进制：
+需要 Go 1.24+。内核默认使用仓库内的 `app/bin/mihomo`（v1.19.34），也可用 `CORE_BIN` 指定其他内核：
 
 ```bash
+./build/build.sh x86
+# 或
 CORE_BIN=/path/to/mihomo ./build/build.sh x86
 ```
 
 产物：`dist/proxyhub-<version>-x86.fpk`。
 
+`app/share/geo/` 缺少文件时，构建脚本会自动调用 `build/fetch-geo.sh` 从 jsDelivr / gcore / GitHub 下载。
+
+包内同时包含：
+
+- `bin/mihomo`：v1.19.34（linux amd64 compatible）
+- `share/geo/`：`Country.mmdb`、`GeoSite.dat`、`GeoIP.dat` 及来源说明
+
 ## 说明
 
 - 内核基于 [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)（GPL-3.0），本项目仅提供管理界面与打包
+- 地理数据来自 [MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)，随包内置，缺失时从镜像更新
 - 订阅内容由服务商提供，请遵守当地法律法规与服务条款
 - 默认监听局域网，请勿直接暴露到公网
 

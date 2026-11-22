@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const appVersion = "1.3.0"
+const appVersion = "1.4.0"
 
 type App struct {
 	appDir   string
@@ -38,10 +38,11 @@ func NewApp(appDir, dataDir, listen string) (*App, error) {
 	if listen == "" {
 		listen = s.Listen
 	}
+	logs := NewLogBuffer(filepath.Join(absData, "app.log"))
 	a := &App{
 		appDir: absApp, dataDir: absData, listen: listen,
-		store: store, core: NewCore(absApp, absData, store),
-		logs:     NewLogBuffer(filepath.Join(absData, "app.log")),
+		store: store, core: NewCore(absApp, absData, store, logs),
+		logs:     logs,
 		pacStore: &pacStore{},
 	}
 	return a, nil
@@ -89,7 +90,8 @@ func (a *App) Boot() {
 			a.logf("尚未配置订阅，等待用户在设置页填写")
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		// 首次拉取订阅时可能还要下载地理数据，给足时间（地理数据下载自身有独立超时）。
+		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		n, err := a.core.UpdateSubscription(ctx)
 		cancel()
 		if err != nil {
@@ -126,7 +128,7 @@ func (a *App) autoUpdateLoop(ctx context.Context) {
 				continue
 			}
 			a.logf("自动更新订阅（间隔 %d 小时）", s.UpdateHours)
-			uctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+			uctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 			n, err := a.core.UpdateSubscription(uctx)
 			cancel()
 			if err != nil {

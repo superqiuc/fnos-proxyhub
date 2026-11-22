@@ -20,16 +20,25 @@ var reTopKey = regexp.MustCompile(`(?m)^(mixed-port|port|socks-port|external-con
 
 type Core struct {
 	mu        sync.Mutex
+	geoMu     sync.Mutex
 	appDir    string
 	dataDir   string
 	store     *Store
+	logs      *LogBuffer
 	cmd       *exec.Cmd
+	done      chan struct{}
 	coreVer   string
 	startedAt time.Time
 }
 
-func NewCore(appDir, dataDir string, store *Store) *Core {
-	return &Core{appDir: appDir, dataDir: dataDir, store: store}
+func NewCore(appDir, dataDir string, store *Store, logs *LogBuffer) *Core {
+	return &Core{appDir: appDir, dataDir: dataDir, store: store, logs: logs}
+}
+
+func (c *Core) logf(format string, args ...any) {
+	if c.logs != nil {
+		c.logs.Add(fmt.Sprintf(format, args...))
+	}
 }
 
 func (c *Core) corePath() string   { return filepath.Join(c.appDir, "bin", "mihomo") }
@@ -54,12 +63,35 @@ func (c *Core) BuildConfig(sub string, s Settings) string {
 }
 
 func (c *Core) Validate(cfg string) error {
+	// 先补齐 GEOIP/GEOSITE 需要的数据文件，避免 mihomo 在校验阶段去 GitHub 慢速下载。
+	if err := c.ensureGeoData(cfg); err != nil {
+		c.logf("地理数据准备不完整，继续尝试校验：%v", err)
+	}
+	err := c.validateOnce(cfg)
+	if err == nil {
+		return nil
+	}
+	// 本地地理数据可能残缺（例如上次下载被强杀），清掉后重试一次。
+	if needsGeoRetry(err, cfg) {
+		c.logf("地理数据校验失败，清理后重试一次：%v", err)
+		c.purgeGeoData(cfg)
+		if e := c.ensureGeoData(cfg); e != nil {
+			c.logf("重新下载地理数据失败：%v", e)
+		}
+		if e := c.validateOnce(cfg); e == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+func (c *Core) validateOnce(cfg string) error {
 	tmp := filepath.Join(c.dataDir, "config.check.yaml")
 	if err := os.WriteFile(tmp, []byte(cfg), 0o600); err != nil {
 		return err
 	}
 	defer os.Remove(tmp)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, c.corePath(), "-t", "-d", c.dataDir, "-f", tmp).CombinedOutput()
 	if err != nil {
@@ -82,6 +114,12 @@ func (c *Core) SyncConfig(s Settings) error {
 }
 
 func (c *Core) Start(s Settings) error {
+	// 已存在的配置在启动前也确保地理数据齐全，避免内核运行时再走慢速下载。
+	if cfg, err := os.ReadFile(c.configPath()); err == nil {
+		if err := c.ensureGeoData(string(cfg)); err != nil {
+			c.logf("启动前准备地理数据失败：%v", err)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stopLocked()
@@ -99,24 +137,42 @@ func (c *Core) Start(s Settings) error {
 		logf.Close()
 		return fmt.Errorf("启动内核失败：%v", err)
 	}
-	go func() { _ = cmd.Wait(); logf.Close() }()
+	done := make(chan struct{})
 	c.cmd = cmd
+	c.done = done
 	c.startedAt = time.Now()
+	go func() {
+		_ = cmd.Wait()
+		logf.Close()
+		close(done)
+	}()
 	return nil
 }
 
+// stopLocked 等待 Start 中唯一的 Wait goroutine 结束，避免重复 Wait 导致
+// 旧进程还没退出就启动新进程（端口被占用、重启失败）。
 func (c *Core) stopLocked() {
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() { _, _ = c.cmd.Process.Wait(); close(done) }()
+	cmd := c.cmd
+	done := c.done
+	if cmd == nil || cmd.Process == nil {
+		c.cmd = nil
+		c.done = nil
+		return
+	}
+	_ = cmd.Process.Signal(os.Interrupt)
+	if done != nil {
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):
-			_ = c.cmd.Process.Kill()
+			_ = cmd.Process.Kill()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+			}
 		}
-		c.cmd = nil
 	}
+	c.cmd = nil
+	c.done = nil
 }
 
 func (c *Core) Stop() {
@@ -128,7 +184,19 @@ func (c *Core) Stop() {
 func (c *Core) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.cmd != nil && c.cmd.Process != nil
+	if c.cmd == nil || c.cmd.Process == nil {
+		return false
+	}
+	if c.done != nil {
+		select {
+		case <-c.done:
+			c.cmd = nil
+			c.done = nil
+			return false
+		default:
+		}
+	}
+	return true
 }
 
 func (c *Core) controllerURL(path string) string {

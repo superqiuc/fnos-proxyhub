@@ -60,7 +60,7 @@ func (c *Core) UpdateSubscription(ctx context.Context) (int, error) {
 	if err := os.WriteFile(c.configPath(), []byte(cfg), 0o600); err != nil {
 		return 0, err
 	}
-	count := strings.Count(text, "- name:")
+	count := countProxies(text)
 	if c.Running() {
 		if err := c.Start(s); err != nil {
 			return count, err
@@ -78,4 +78,109 @@ func (c *Core) LastUpdate() time.Time {
 		return time.Time{}
 	}
 	return st.ModTime()
+}
+
+// countProxies 统计订阅中的代理节点数，兼容 flow 风格（proxies: [{...}]）
+// 和常见的块风格（proxies:\n  - name: ...）。仅用于界面提示，允许近似。
+func countProxies(text string) int {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "proxies:") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "proxies:"))
+		if strings.HasPrefix(rest, "[") {
+			var b strings.Builder
+			b.WriteString(rest)
+			for j := i + 1; j < len(lines) && !flowArrayClosed(b.String()); j++ {
+				b.WriteString("\n")
+				b.WriteString(lines[j])
+			}
+			return countFlowObjects(b.String())
+		}
+		count := 0
+		for j := i + 1; j < len(lines); j++ {
+			l := lines[j]
+			trimmed := strings.TrimSpace(l)
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if l[0] != ' ' && l[0] != '\t' {
+				break
+			}
+			if strings.HasPrefix(trimmed, "- name:") {
+				count++
+			}
+		}
+		return count
+	}
+	return 0
+}
+
+func flowArrayClosed(s string) bool {
+	depth := 0
+	inStr, esc := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+		}
+	}
+	return depth <= 0
+}
+
+func countFlowObjects(s string) int {
+	depth := 0
+	inStr, esc := false, false
+	count := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '[', '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+			if depth == 1 {
+				count++
+			}
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return count
 }

@@ -1,2 +1,80 @@
 #!/bin/bash
+# 卸载清理后执行：根据卸载向导里的选择，保留或删除应用数据。
+set -u
+
+APPNAME="proxyhub"
+PKGVAR="${TRIM_PKGVAR:-/var/apps/$APPNAME/var}"
+ACTION="${wizard_data_action:-keep}"
+LOG_FILE="${TRIM_TEMP_LOGFILE:-/tmp/${APPNAME}-uninstall.log}"
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE" 2>/dev/null; }
+
+# 解析数据目录：TRIM_PKGVAR 通常是 /var/apps/<app>/var -> /volN/@appdata/<app> 的软链。
+# 卸载清理后软链可能已被移除，因此再用 TRIM_APPDEST / TRIM_APPDEST_VOL 兜底。
+resolve_data_dir() {
+    local target="" guess=""
+    if [ -L "$PKGVAR" ] || [ -d "$PKGVAR" ]; then
+        target="$(readlink -f "$PKGVAR" 2>/dev/null || true)"
+        if [ -z "$target" ]; then
+            target="$(readlink "$PKGVAR" 2>/dev/null || true)"
+        fi
+    fi
+    case "$PKGVAR" in
+        */@appdata/"$APPNAME") [ -z "$target" ] && target="$PKGVAR" ;;
+    esac
+    if [ -z "$target" ]; then
+        case "${TRIM_APPDEST:-}" in
+            */@appcenter/*) guess="${TRIM_APPDEST%%/@appcenter/*}/@appdata/$APPNAME" ;;
+        esac
+    fi
+    if [ -z "$target" ] && [ -z "$guess" ] && [ -n "${TRIM_APPDEST_VOL:-}" ]; then
+        case "$TRIM_APPDEST_VOL" in
+            */@appcenter*) guess="${TRIM_APPDEST_VOL%%/@appcenter*}/@appdata/$APPNAME" ;;
+            *) guess="${TRIM_APPDEST_VOL%/}/@appdata/$APPNAME" ;;
+        esac
+    fi
+    if [ -z "$target" ] && [ -n "$guess" ] && [ -d "$guess" ]; then
+        target="$guess"
+    fi
+    printf '%s' "$target"
+}
+
+case "$ACTION" in
+    delete)
+        target="$(resolve_data_dir)"
+        log "用户选择删除所有数据，目标：${target:-（未找到）}"
+        if [ -z "$target" ]; then
+            log "未找到应用数据目录，可能已被系统清理"
+            exit 0
+        fi
+        case "$target" in
+            /var/apps/"$APPNAME"/var|*/@appdata/"$APPNAME") ;;
+            *)
+                log "拒绝删除非应用数据目录：$target"
+                [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "数据目录异常，已取消删除。" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null
+                exit 1
+                ;;
+        esac
+        if [ -e "$target" ]; then
+            rm -rf -- "$target" 2>/dev/null
+            if [ -e "$target" ]; then
+                log "删除失败：$target"
+                [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "删除应用数据失败，请手动清理。" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null
+                exit 1
+            fi
+            log "已删除数据目录：$target"
+        else
+            log "数据目录不存在：$target"
+        fi
+        # 清理可能残留的 var 软链接
+        [ -L "$PKGVAR" ] && rm -f -- "$PKGVAR" 2>/dev/null
+        ;;
+    keep|"")
+        log "用户选择保留数据，未删除：$PKGVAR"
+        ;;
+    *)
+        log "未知数据选项：$ACTION，按保留处理"
+        ;;
+esac
+
 exit 0

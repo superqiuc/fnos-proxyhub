@@ -1,0 +1,34 @@
+[
+  {
+    "stepTitle": "卸载代理中心",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "卸载后会停止代理服务。应用数据包含订阅链接、节点配置、PAC 规则和日志，请选择如何处理。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_data_action",
+        "label": "应用数据",
+        "initValue": "keep",
+        "rules": [
+          { "required": true, "message": "请选择数据处理方式" }
+        ],
+        "options": [
+          {
+            "label": "保留数据（推荐）：重新安装后订阅和设置会自动恢复",
+            "value": "keep"
+          },
+          {
+            "label": "删除所有数据：订阅、设置、PAC 规则、日志全部删除，且不可恢复",
+            "value": "delete"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "<strong>选择「删除所有数据」后无法恢复</strong>，建议先记下订阅链接。"
+      }
+    ]
+  }
+]

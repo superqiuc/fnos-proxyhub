@@ -276,7 +276,7 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		if needRestart {
 			err := a.core.Start(out)
 			if err != nil && strings.Contains(err.Error(), "请先更新订阅") {
-				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 				if _, e2 := a.core.UpdateSubscription(ctx); e2 == nil {
 					err = a.core.Start(out)
 				} else {
@@ -330,7 +330,8 @@ func (a *App) apiSubUpdate(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusMethodNotAllowed, "方法不支持")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// 首次更新可能包含地理数据下载，留足时间。
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 	n, err := a.core.UpdateSubscription(ctx)
 	if err != nil {

@@ -7,3 +7,8 @@ app/bin/
 
 # 内核
 .cache/
+
+# 内置地理数据（构建时由 build/fetch-geo.sh 下载，随安装包分发）
+app/share/geo/*.dat
+app/share/geo/*.mmdb
+app/share/geo/*.download

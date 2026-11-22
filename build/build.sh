@@ -2,11 +2,16 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(awk -F'=' '/^version[[:space:]]*=/{gsub(/[[:space:]]/,"",$2);print $2}' "$ROOT/manifest")"
-CORE="${CORE_BIN:-/vol1/1000/harness/mihomo/.cache/mihomo-x86}"
+CORE="${CORE_BIN:-$ROOT/app/bin/mihomo}"
 DIST="$ROOT/dist"
 info(){ printf '\033[32m==>\033[0m %s\n' "$*"; }
 die(){ printf '\033[31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 [ -x "$CORE" ] || die "缺少 mihomo 内核：$CORE"
+info "内核：$("$CORE" -v | head -n 1)"
+if [ ! -s "$ROOT/app/share/geo/Country.mmdb" ] || [ ! -s "$ROOT/app/share/geo/GeoSite.dat" ] || [ ! -s "$ROOT/app/share/geo/GeoIP.dat" ]; then
+    info "内置地理数据缺失，开始下载"
+    bash "$ROOT/build/fetch-geo.sh" || die "地理数据下载失败"
+fi
 GO_BIN="${GO_BIN:-/vol1/1000/harness/.toolchain/go/bin/go}"
 [ -x "$GO_BIN" ] || die "未找到 Go"
 mkdir -p "$DIST" "$ROOT/app/bin" "$ROOT/.tmp"
@@ -18,12 +23,15 @@ info "编译 proxyhub"
 chmod 755 "$PAYLOAD/bin/proxyhub"
 cp "$CORE" "$PAYLOAD/bin/mihomo"; chmod 755 "$PAYLOAD/bin/mihomo"
 cp -a "$ROOT/app/ui" "$PAYLOAD/ui"
+if [ -d "$ROOT/app/share" ]; then cp -a "$ROOT/app/share" "$PAYLOAD/share"; fi
 cp "$ROOT/manifest" "$STAGE/manifest"
 cp -a "$ROOT/config" "$ROOT/cmd" "$ROOT/wizard" "$STAGE/"
 cp "$ROOT/ICON.PNG" "$ROOT/ICON_256.PNG" "$STAGE/"
 find "$STAGE" -type d -exec chmod 755 {} +; find "$STAGE" -type f -exec chmod 644 {} +; chmod 755 "$STAGE"/cmd/*
 find "$PAYLOAD" -type d -exec chmod 755 {} +; find "$PAYLOAD" -type f -exec chmod 644 {} +; chmod 755 "$PAYLOAD/bin/proxyhub" "$PAYLOAD/bin/mihomo"
-tar czf "$STAGE/app.tgz" -C "$PAYLOAD" --owner=0 --group=0 --numeric-owner --sort=name bin ui
+TAR_ITEMS=(bin ui)
+if [ -d "$PAYLOAD/share" ]; then TAR_ITEMS+=(share); fi
+tar czf "$STAGE/app.tgz" -C "$PAYLOAD" --owner=0 --group=0 --numeric-owner --sort=name "${TAR_ITEMS[@]}"
 chmod 644 "$STAGE/app.tgz"
 OUT="$DIST/proxyhub-${VERSION}-x86.fpk"; rm -f "$OUT"
 tar czf "$OUT" -C "$STAGE" --owner=0 --group=0 --numeric-owner --sort=name manifest cmd config wizard ICON.PNG ICON_256.PNG app.tgz
