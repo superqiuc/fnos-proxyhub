@@ -295,14 +295,15 @@ func (a *App) buildPAC(proxyHost string) string {
 		rules = a.loadBuiltinPAC()
 	}
 	var b strings.Builder
+	proxyJS, _ := json.Marshal(proxy)
 	if s.PACMode == "global" {
 		b.WriteString("// proxyhub PAC (global)\n")
-		b.WriteString(fmt.Sprintf("var PROXY = '%s';\n", proxy))
+		b.WriteString("var PROXY = " + string(proxyJS) + ";\n")
 		b.WriteString("function FindProxyForURL(url, host) {\n  if (isPlainHostName(host)) return \"DIRECT\";\n  return PROXY;\n}\n")
 		return b.String()
 	}
 	b.WriteString("// proxyhub PAC (gfwlist)\n")
-	b.WriteString(fmt.Sprintf("var PROXY = '%s';\n", proxy))
+	b.WriteString("var PROXY = " + string(proxyJS) + ";\n")
 	b.WriteString("var DIRECT_LIST = " + jsStringArray(rules.Direct) + ";\n")
 	b.WriteString("var SUFFIX_LIST = " + jsStringArray(rules.Suffix) + ";\n")
 	b.WriteString("var KEYWORD_LIST = " + jsStringArray(rules.Keyword) + ";\n")
@@ -378,7 +379,7 @@ func (a *App) pacBase(r *http.Request) string {
 		if !strings.Contains(host, ":") {
 			port := a.listen
 			if port == "" {
-				port = s.Listen
+				port = "8898"
 			}
 			host = host + ":" + port
 		}
@@ -389,9 +390,6 @@ func (a *App) pacBase(r *http.Request) string {
 		ip = "127.0.0.1"
 	}
 	port := a.listen
-	if port == "" {
-		port = s.Listen
-	}
 	if port == "" {
 		port = "8898"
 	}

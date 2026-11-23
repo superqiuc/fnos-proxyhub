@@ -2,6 +2,7 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var state = { settings: null, groups: [], current: '', group: '', options: [], delays: {} };
+  var authState = { enabled: false, authenticated: true };
   async function api(path, opts) {
     opts = opts || {};
     var init = { method: opts.method || 'GET', headers: {}, cache: 'no-store' };
@@ -10,7 +11,11 @@
     var text = await res.text();
     var data = null;
     try { data = text ? JSON.parse(text) : null; } catch (e) { data = { error: text }; }
-    if (!res.ok) throw new Error((data && data.error) || ('HTTP ' + res.status));
+    if (!res.ok) {
+      var msg = (data && data.error) || ('HTTP ' + res.status);
+      if (res.status === 401) { showLogin(); }
+      throw new Error(msg);
+    }
     return data;
   }
   var tt = null;
@@ -66,12 +71,25 @@
   }
   function renderNodes() {
     var sel = $('node-select');
-    if (!state.options || !state.options.length) { sel.innerHTML = '<option value="">暂无节点</option>'; lastOptionsKey = ''; return; }
+    if (!state.options || !state.options.length) {
+      sel.innerHTML = '';
+      var empty = document.createElement('option');
+      empty.value = '';
+      empty.textContent = '暂无节点';
+      sel.appendChild(empty);
+      lastOptionsKey = '';
+      return;
+    }
     var key = state.group + '|' + state.options.join('|');
     if (key !== lastOptionsKey) {
-      sel.innerHTML = state.options.map(function (n) {
-        return '<option value="' + n.replace(/"/g, '&quot;') + '">' + nodeLabel(n) + '</option>';
-      }).join('');
+      // 用 DOM 节点而不是拼 HTML：节点名来自订阅，不能当作可信内容。
+      sel.innerHTML = '';
+      state.options.forEach(function (n) {
+        var o = document.createElement('option');
+        o.value = n;
+        o.textContent = nodeLabel(n);
+        sel.appendChild(o);
+      });
       lastOptionsKey = key;
     } else {
       // 只更新文字，避免重建下拉导致闪烁
@@ -128,7 +146,8 @@
       toast(d.updated ? ('内核已更新到 ' + d.latest) : ('已是最新 ' + d.latest));
       $('core-note').textContent = d.updated ? ('已更新：' + d.current + ' → ' + d.latest) : '已是最新版本。';
       loadCore();
-    loadPAC(); refresh();
+      loadPAC();
+      refresh();
     } catch (e) { $('core-note').textContent = '更新失败：' + e.message; toast(e.message, true); }
     finally { btn.disabled = false; btn.textContent = '更新内核'; }
   }
@@ -193,11 +212,18 @@
   }
 
   async function saveSettings(update) {
+    var mixedPort = parseInt($('mixed-port').value, 10);
+    if (!mixedPort || mixedPort < 1 || mixedPort > 65535) { toast('混合端口需为 1-65535 之间的整数', true); return; }
+    var updateHours = parseInt($('sub-hours').value, 10) || 12;
+    if (updateHours < 1 || updateHours > 168) { toast('更新间隔需为 1-168 小时', true); return; }
+    var tuneInput = $('auto-tune-interval') ? $('auto-tune-interval').value.trim() : '';
+    var tuneInterval = tuneInput ? parseInt(tuneInput, 10) : 0;
+    if (tuneInput && (!tuneInterval || tuneInterval < 30 || tuneInterval > 86400)) { toast('测速间隔需为 30-86400 秒', true); return; }
     var s = JSON.parse(JSON.stringify(state.settings || {}));
     s.subscription_url = $('sub-url').value.trim();
-    s.update_hours = parseInt($('sub-hours').value, 10) || 12;
+    s.update_hours = updateHours;
     s.auto_update = $('auto-update').checked;
-    s.mixed_port = parseInt($('mixed-port').value, 10) || 7891;
+    s.mixed_port = mixedPort;
     s.mode = $('mode').value;
     s.log_level = $('log-level').value;
     s.allow_lan = $('allow-lan').checked;
@@ -206,9 +232,8 @@
     if ($('ipv6')) { s.ipv6 = $('ipv6').checked; }
     if ($('tcp-concurrent')) { s.tcp_concurrent = $('tcp-concurrent').checked; }
     if ($('auto-tune-interval')) {
-      var ti = parseInt($('auto-tune-interval').value, 10);
-      s.auto_tune = !!ti && ti > 0;
-      s.auto_tune_interval = s.auto_tune ? ti : 0;
+      s.auto_tune = !!tuneInterval;
+      s.auto_tune_interval = s.auto_tune ? tuneInterval : 0;
     }
     try {
       var res = await api('settings', { method: 'PUT', body: s });
@@ -253,6 +278,80 @@
     } catch (e) { /* ignore */ }
   }
 
+  function showLogin() {
+    var el = $('login-overlay');
+    if (!el) return;
+    el.hidden = false;
+    var inp = $('login-password');
+    if (inp) setTimeout(function () { inp.focus(); }, 50);
+  }
+  function hideLogin() {
+    var el = $('login-overlay');
+    if (el) el.hidden = true;
+  }
+  function updateAuthNote() {
+    var n = $('auth-note');
+    if (n) {
+      n.textContent = authState.enabled
+        ? '已启用访问密码：其他设备需要登录后才能管理。'
+        : '未启用访问密码：局域网内任何设备都能直接打开本页，建议设置密码。';
+    }
+    var btn = $('btn-logout');
+    if (btn) btn.hidden = !authState.enabled;
+  }
+  async function loadAuth() {
+    try { authState = await api('auth'); } catch (e) { authState = { enabled: false, authenticated: true }; }
+    updateAuthNote();
+  }
+  async function doLogin(e) {
+    if (e) e.preventDefault();
+    var pw = $('login-password').value;
+    var errEl = $('login-error');
+    if (!pw) { errEl.textContent = '请输入访问密码'; return; }
+    try {
+      await api('login', { method: 'POST', body: { password: pw } });
+      $('login-password').value = '';
+      if (errEl) errEl.textContent = '';
+      hideLogin();
+      authState.enabled = true;
+      authState.authenticated = true;
+      updateAuthNote();
+      await startApp();
+      toast('已登录');
+    } catch (err) {
+      if (errEl) errEl.textContent = err.message;
+    }
+  }
+  async function doLogout() {
+    try { await api('logout', { method: 'POST' }); } catch (e) { /* 忽略 */ }
+    authState.authenticated = false;
+    updateAuthNote();
+    stopPolling();
+    showLogin();
+  }
+  async function savePassword(clear) {
+    var pw = clear ? '' : $('access-password').value;
+    if (!clear && pw.length < 6) { toast('访问密码至少 6 位', true); return; }
+    if (!clear && pw.length > 128) { toast('访问密码不能超过 128 位', true); return; }
+    try {
+      var d = await api('auth/password', { method: 'PUT', body: { new_password: pw } });
+      authState.enabled = !!d.enabled;
+      authState.authenticated = true;
+      $('access-password').value = '';
+      updateAuthNote();
+      toast(d.enabled ? '访问密码已设置' : '访问密码已关闭');
+    } catch (e) { toast(e.message, true); }
+  }
+
+  async function startApp() {
+    await loadSettings();
+    await refresh();
+    await loadLogs();
+    loadCore();
+    loadPAC();
+    startPolling();
+  }
+
   async function init() {
     $('node-select').addEventListener('change', selectNode);
     $('btn-save').addEventListener('click', function () { saveSettings(false); });
@@ -266,13 +365,14 @@
     if ($('btn-save-pac')) { $('btn-save-pac').addEventListener('click', function () { saveSettings(false); }); }
     if ($('btn-save-tune')) { $('btn-save-tune').addEventListener('click', function () { saveSettings(false); }); }
     if ($('btn-save-log')) { $('btn-save-log').addEventListener('click', function () { saveSettings(false); }); }
+    if ($('btn-save-password')) { $('btn-save-password').addEventListener('click', function () { savePassword(false); }); }
+    if ($('btn-clear-password')) { $('btn-clear-password').addEventListener('click', function () { savePassword(true); }); }
+    if ($('btn-logout')) { $('btn-logout').addEventListener('click', doLogout); }
+    if ($('login-form')) { $('login-form').addEventListener('submit', doLogin); }
     $('btn-pac-copy').addEventListener('click', copyPAC);
-    await loadSettings();
-    await refresh();
-    await loadLogs();
-    loadCore();
-    loadPAC();
-    startPolling();
+    await loadAuth();
+    if (authState.enabled && !authState.authenticated) { showLogin(); return; }
+    await startApp();
   }
 
   var fullTimer = null, nodeTimer = null;

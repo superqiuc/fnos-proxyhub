@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func main() {
 	appDir := flag.String("app", "", "应用安装目录")
 	dataDir := flag.String("data", "", "数据目录")
-	listen := flag.String("listen", "", "管理端口")
+	listen := flag.String("listen", "8898", "管理端口")
 	applyWiz := flag.Bool("apply-wizard", false, "写入向导配置后退出")
 	showVersion := flag.Bool("version", false, "打印版本")
 	flag.Parse()
@@ -43,7 +42,6 @@ func main() {
 	if err := app.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "运行失败：", err)
 	}
-	_ = strings.TrimSpace("")
 }
 
 func applyWizard(dataDir string) error {

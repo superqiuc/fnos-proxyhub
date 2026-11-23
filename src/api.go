@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -33,19 +34,24 @@ func apiErr(w http.ResponseWriter, code int, msg string) {
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
-	mux.HandleFunc("/api/status", a.apiStatus)
-	mux.HandleFunc("/api/settings", a.apiSettings)
-	mux.HandleFunc("/api/subscription/update", a.apiSubUpdate)
-	mux.HandleFunc("/api/nodes", a.apiNodes)
-	mux.HandleFunc("/api/nodes/select", a.apiSelect)
-	mux.HandleFunc("/api/core/restart", a.apiRestart)
-	mux.HandleFunc("/api/logs", a.apiLogs)
-	mux.HandleFunc("/api/nodes/delay", a.apiDelay)
+	// 登录相关接口保持公开；其余管理接口统一要求会话（未启用密码时直接放行）。
+	mux.HandleFunc("/api/auth", a.apiAuthStatus)
+	mux.HandleFunc("/api/login", a.apiLogin)
+	mux.HandleFunc("/api/logout", a.apiLogout)
+	mux.HandleFunc("/api/auth/password", a.requireAuth(a.apiSetPassword))
+	mux.HandleFunc("/api/status", a.requireAuth(a.apiStatus))
+	mux.HandleFunc("/api/settings", a.requireAuth(a.apiSettings))
+	mux.HandleFunc("/api/subscription/update", a.requireAuth(a.apiSubUpdate))
+	mux.HandleFunc("/api/nodes", a.requireAuth(a.apiNodes))
+	mux.HandleFunc("/api/nodes/select", a.requireAuth(a.apiSelect))
+	mux.HandleFunc("/api/core/restart", a.requireAuth(a.apiRestart))
+	mux.HandleFunc("/api/logs", a.requireAuth(a.apiLogs))
+	mux.HandleFunc("/api/nodes/delay", a.requireAuth(a.apiDelay))
 	mux.HandleFunc("/pac", a.apiPAC)
-	mux.HandleFunc("/api/pac", a.apiPACInfo)
-	mux.HandleFunc("/api/pac/update", a.apiPACUpdate)
-	mux.HandleFunc("/api/core", a.apiCoreInfo)
-	mux.HandleFunc("/api/core/update", a.apiCoreUpdate)
+	mux.HandleFunc("/api/pac", a.requireAuth(a.apiPACInfo))
+	mux.HandleFunc("/api/pac/update", a.requireAuth(a.apiPACUpdate))
+	mux.HandleFunc("/api/core", a.requireAuth(a.apiCoreInfo))
+	mux.HandleFunc("/api/core/update", a.requireAuth(a.apiCoreUpdate))
 	mux.HandleFunc("/", a.serveUI)
 	return mux
 }
@@ -183,6 +189,7 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s := a.store.Get()
 		s.Secret = "***"
+		s.AccessPassword = ""
 		writeJSON(w, http.StatusOK, s)
 	case http.MethodPut:
 		cur := a.store.Get()
@@ -198,9 +205,6 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 兼容部分字段提交：缺省值沿用当前设置，避免被零值覆盖。
-		if in.Listen == "" {
-			in.Listen = cur.Listen
-		}
 		if in.MixedPort <= 0 {
 			in.MixedPort = cur.MixedPort
 		}
@@ -216,9 +220,9 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		if in.UpdateHours <= 0 {
 			in.UpdateHours = cur.UpdateHours
 		}
-		if in.Secret == "" || strings.Contains(in.Secret, "***") {
-			in.Secret = cur.Secret
-		}
+		// 内核 secret 与访问密码都只能由各自的后端逻辑修改，避免通过设置接口绕过。
+		in.Secret = cur.Secret
+		in.AccessPassword = cur.AccessPassword
 		coreChanged := in.MixedPort != cur.MixedPort || in.ControllerPort != cur.ControllerPort ||
 			in.IPv6 != cur.IPv6 || in.TCPConcurrent != cur.TCPConcurrent || in.Mode != cur.Mode || in.LogLevel != cur.LogLevel || in.AllowLAN != cur.AllowLAN ||
 			in.AutoTune != cur.AutoTune || (in.AutoTune && in.AutoTuneInterval != cur.AutoTuneInterval)
@@ -234,11 +238,17 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err := a.store.Save(in); err != nil {
+		// 密码和 secret 只由各自的后端逻辑修改；在写锁内合并，避免并发保存互相覆盖。
+		out, err := a.store.Update(func(st *Settings) {
+			pwd, secret := st.AccessPassword, st.Secret
+			*st = in
+			st.AccessPassword = pwd
+			st.Secret = secret
+		})
+		if err != nil {
 			apiErr(w, http.StatusInternalServerError, "保存失败："+err.Error())
 			return
 		}
-		out := a.store.Get()
 		needRestart := in.ControllerPort != cur.ControllerPort || in.IPv6 != cur.IPv6 || in.TCPConcurrent != cur.TCPConcurrent ||
 			in.AutoTune != cur.AutoTune || (in.AutoTune && in.AutoTuneInterval != cur.AutoTuneInterval)
 		hot := in.Mode != cur.Mode || in.LogLevel != cur.LogLevel || in.AllowLAN != cur.AllowLAN || in.MixedPort != cur.MixedPort
@@ -274,6 +284,7 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 		restarted := false
 		restartErr := ""
 		if needRestart {
+			a.coreUpdateMu.Lock()
 			err := a.core.Start(out)
 			if err != nil && strings.Contains(err.Error(), "请先更新订阅") {
 				ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -292,10 +303,12 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 				restarted = true
 				a.logf("设置已保存并重启内核（混合端口 %d，模式 %s，IPv6 %v）", out.MixedPort, out.Mode, out.IPv6)
 			}
+			a.coreUpdateMu.Unlock()
 		} else if !hotApplied {
 			a.logf("设置已保存（混合端口 %d，模式 %s）", out.MixedPort, out.Mode)
 		}
 		out.Secret = "***"
+		out.AccessPassword = ""
 		writeJSON(w, http.StatusOK, map[string]any{"settings": out, "restarted": restarted, "hot_applied": hotApplied, "restart_error": restartErr})
 	default:
 		apiErr(w, http.StatusMethodNotAllowed, "方法不支持")
@@ -305,7 +318,12 @@ func (a *App) apiSettings(w http.ResponseWriter, r *http.Request) {
 // rollbackSettings 用旧设置恢复配置并重启，返回错误描述。
 func (a *App) rollbackSettings(old Settings, cause error) string {
 	a.logf("新设置启动失败，正在回滚：%v", cause)
-	if err := a.store.Save(old); err != nil {
+	if _, err := a.store.Update(func(st *Settings) {
+		pwd, secret := st.AccessPassword, st.Secret
+		*st = old
+		st.AccessPassword = pwd
+		st.Secret = secret
+	}); err != nil {
 		a.logf("回滚保存设置失败：%v", err)
 		return cause.Error()
 	}
@@ -333,7 +351,7 @@ func (a *App) apiSubUpdate(w http.ResponseWriter, r *http.Request) {
 	// 首次更新可能包含地理数据下载，留足时间。
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
-	n, err := a.core.UpdateSubscription(ctx)
+	n, err := a.updateSubscription(ctx)
 	if err != nil {
 		a.logf("更新订阅失败：%v", err)
 		apiErr(w, http.StatusBadGateway, err.Error())
@@ -367,7 +385,8 @@ func (a *App) apiSelect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s := a.store.Get()
-	body := strings.NewReader(fmt.Sprintf(`{"name":%q}`, req.Name))
+	payload, _ := json.Marshal(map[string]string{"name": req.Name})
+	body := bytes.NewReader(payload)
 	u := fmt.Sprintf("http://127.0.0.1:%d/proxies/%s", s.ControllerPort, url.PathEscape(req.Group))
 	httpReq, _ := http.NewRequest(http.MethodPut, u, body)
 	httpReq.Header.Set("Authorization", "Bearer "+s.Secret)
@@ -392,6 +411,8 @@ func (a *App) apiRestart(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusMethodNotAllowed, "方法不支持")
 		return
 	}
+	a.coreUpdateMu.Lock()
+	defer a.coreUpdateMu.Unlock()
 	s := a.store.Get()
 	if err := a.core.Start(s); err != nil {
 		apiErr(w, http.StatusBadGateway, err.Error())

@@ -11,6 +11,7 @@
   <div class="brand"><span class="logo">P</span><div><h1>代理中心</h1><p>mihomo 内核 · 订阅自动更新</p></div></div>
   <div class="actions">
     <span id="pill" class="pill"><i></i><span>连接中…</span></span>
+    <button id="btn-logout" class="btn" hidden>退出</button>
     <button id="btn-restart" class="btn">重启内核</button>
   </div>
 </header>
@@ -94,6 +95,12 @@
       <label class="switch-field"><input id="ipv6" type="checkbox"><span class="track"></span><span>启用 IPv6</span></label>
       <label class="switch-field"><input id="tcp-concurrent" type="checkbox"><span class="track"></span><span>TCP 并发</span></label>
     </div>
+    <div class="row">
+      <label class="grow">访问密码<input id="access-password" type="password" autocomplete="new-password" placeholder="至少 6 位；留空不修改"></label>
+      <button id="btn-save-password" class="btn">设置密码</button>
+      <button id="btn-clear-password" class="btn ghost">关闭密码</button>
+    </div>
+    <p class="hint" id="auth-note"></p>
     <div class="row"><span class="spacer"></span><button id="btn-save" class="btn primary">保存</button></div>
     <p class="hint" id="set-note"></p>
   </section>
@@ -103,6 +110,15 @@
     <pre class="logs" id="logs"></pre>
   </section>
 </main>
+<div id="login-overlay" class="login-overlay" hidden>
+  <form id="login-form" class="login-box">
+    <h2>需要登录</h2>
+    <p class="hint" style="margin:0">代理中心已启用访问密码。</p>
+    <input id="login-password" type="password" autocomplete="current-password" placeholder="访问密码">
+    <p class="hint login-err" id="login-error"></p>
+    <button class="btn primary" type="submit">登录</button>
+  </form>
+</div>
 <div id="toast" class="toast"></div>
 <script src="app.js?v={{V}}"></script>
 </body>

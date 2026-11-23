@@ -80,3 +80,13 @@ select{padding-right:30px}
 @media(max-width:700px){.card-foot #pac-note{max-width:100%}.card-foot .btn{width:100%}}
 #auto-tune-interval{width:240px}
 @media(max-width:700px){#auto-tune-interval{width:100%}}
+#access-password{min-width:220px}
+#btn-logout[hidden]{display:none}
+.login-overlay{position:fixed;inset:0;z-index:80;display:grid;place-items:center;padding:20px;background:rgba(5,8,13,.86);backdrop-filter:blur(6px)}
+.login-overlay[hidden]{display:none}
+.login-box{width:min(360px,100%);display:flex;flex-direction:column;gap:14px;padding:26px;border-radius:18px;border:1px solid var(--border);background:linear-gradient(180deg,rgba(30,41,59,.96),rgba(15,23,42,.98));box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.login-box h2{font-size:18px}
+.login-box input{height:42px}
+.login-box .btn{width:100%}
+.login-err{color:#fecaca;min-height:18px;margin:0;font-size:12.5px}
+@media(max-width:700px){#access-password{min-width:0}}

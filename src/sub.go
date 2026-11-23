@@ -50,14 +50,16 @@ func (c *Core) UpdateSubscription(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// 拉取期间设置可能被修改，重新读取，避免把旧端口/模式写回配置。
+	s = c.store.Get()
 	cfg := c.BuildConfig(text, s)
 	if err := c.Validate(cfg); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(c.subPath(), []byte(text), 0o600); err != nil {
+	if err := writeFileAtomic(c.subPath(), []byte(text), 0o600); err != nil {
 		return 0, err
 	}
-	if err := os.WriteFile(c.configPath(), []byte(cfg), 0o600); err != nil {
+	if err := writeFileAtomic(c.configPath(), []byte(cfg), 0o600); err != nil {
 		return 0, err
 	}
 	count := countProxies(text)

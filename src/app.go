@@ -2,17 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
+	"os/signal"
 	"path/filepath"
-	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
-const appVersion = "1.4.0"
+// appVersion 由构建脚本通过 -ldflags "-X main.appVersion=..." 注入。
+var appVersion = "dev"
 
 type App struct {
 	appDir   string
@@ -22,6 +25,9 @@ type App struct {
 	core     *Core
 	logs     *LogBuffer
 	pacStore *pacStore
+
+	// coreUpdateMu 串行化「换内核」和「重启内核」，避免替换过程中被并发重启打进中间态。
+	coreUpdateMu sync.Mutex
 }
 
 func NewApp(appDir, dataDir, listen string) (*App, error) {
@@ -34,9 +40,8 @@ func NewApp(appDir, dataDir, listen string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := store.Get()
 	if listen == "" {
-		listen = s.Listen
+		listen = "8898"
 	}
 	logs := NewLogBuffer(filepath.Join(absData, "app.log"))
 	a := &App{
@@ -45,11 +50,16 @@ func NewApp(appDir, dataDir, listen string) (*App, error) {
 		logs:     logs,
 		pacStore: &pacStore{},
 	}
+	if w := store.Warning(); w != "" {
+		a.logf("%s", w)
+	}
 	return a, nil
 }
 
 func (a *App) logf(format string, args ...any) {
-	a.logs.Add(fmt.Sprintf(format, args...))
+	if a.logs != nil {
+		a.logs.Add(fmt.Sprintf(format, args...))
+	}
 }
 
 // Boot 启动内核：有配置直接用；没有配置则尝试拉订阅。
@@ -79,6 +89,8 @@ func (a *App) pickControllerPort(s Settings) Settings {
 }
 
 func (a *App) Boot() {
+	// 若上次更新内核时进程被强杀/断电，先回滚到备份再启动。
+	a.recoverInterruptedUpdate()
 	s := a.store.Get()
 	s = a.pickControllerPort(s)
 	if !portFree(s.MixedPort) {
@@ -111,6 +123,13 @@ func (a *App) Boot() {
 	a.logf("内核已启动：%s，混合端口 %d", a.core.Version(), s.MixedPort)
 }
 
+// updateSubscription 与内核更新/重启串行化，避免自动更新在换内核的中间态重启进程。
+func (a *App) updateSubscription(ctx context.Context) (int, error) {
+	a.coreUpdateMu.Lock()
+	defer a.coreUpdateMu.Unlock()
+	return a.core.UpdateSubscription(ctx)
+}
+
 func (a *App) autoUpdateLoop(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
@@ -129,7 +148,7 @@ func (a *App) autoUpdateLoop(ctx context.Context) {
 			}
 			a.logf("自动更新订阅（间隔 %d 小时）", s.UpdateHours)
 			uctx, cancel := context.WithTimeout(ctx, 300*time.Second)
-			n, err := a.core.UpdateSubscription(uctx)
+			n, err := a.updateSubscription(uctx)
 			cancel()
 			if err != nil {
 				a.logf("自动更新失败：%v", err)
@@ -152,23 +171,38 @@ func (a *App) Run() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go a.autoUpdateLoop(ctx)
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	a.Boot()
-	srv := &http.Server{Addr: ":" + a.listen, Handler: a.routes()}
+	// 管理端口绑定失败或服务退出时，确保不留下孤儿 mihomo。
+	defer a.core.Stop()
+	// 初始启动完成后再开始定时任务，避免首次拉取订阅与自动更新并发。
+	go a.autoUpdateLoop(ctx)
+	ln, err := net.Listen("tcp", ":"+a.listen)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{
+		Handler:           a.routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       60 * time.Second,
+	}
+	go func() {
+		<-sigCtx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
 	a.logf("代理中心已启动（版本 %s，端口 %s）", appVersion, a.listen)
-	return srv.ListenAndServe()
+	err = srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 func (a *App) coreLogTail(n int) []string {
-	b, err := os.ReadFile(a.core.logPath())
-	if err != nil {
-		return nil
-	}
-	lines := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return lines
+	return tailLines(a.core.logPath(), 256<<10, n)
 }
-
-var _ = exec.Command

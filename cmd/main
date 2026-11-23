@@ -12,7 +12,12 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$INFO_LOG" 2>/dev/null; }
 fail() { log "ERROR: $1"; [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$1" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null; return 1; }
 pid_of() { [ -f "$PID_FILE" ] && head -n 1 "$PID_FILE" 2>/dev/null | tr -dc '0-9'; }
 port_ready() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1; }
-is_running() { local pid; pid=$(pid_of); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
+is_our_pid() {
+    local pid="$1"
+    [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] || return 1
+    tr '\0' ' ' < "/proc/$pid/cmdline" | grep -Fq -- "$BIN"
+}
+is_running() { local pid; pid=$(pid_of); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && is_our_pid "$pid"; }
 start_process() {
     if is_running; then log "已在运行"; return 0; fi
     rm -f "$PID_FILE"
@@ -32,7 +37,7 @@ start_process() {
 }
 stop_process() {
     local pid; pid=$(pid_of)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && is_our_pid "$pid" && kill -0 "$pid" 2>/dev/null; then
         kill -TERM "$pid" 2>/dev/null
         local i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 40 ]; do sleep 0.5; i=$((i+1)); done
         kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null

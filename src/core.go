@@ -32,6 +32,12 @@ type Core struct {
 }
 
 func NewCore(appDir, dataDir string, store *Store, logs *LogBuffer) *Core {
+	// 清掉上次异常退出可能残留的配置校验临时文件。
+	if matches, err := filepath.Glob(filepath.Join(dataDir, "config.check*.yaml")); err == nil {
+		for _, m := range matches {
+			_ = os.Remove(m)
+		}
+	}
 	return &Core{appDir: appDir, dataDir: dataDir, store: store, logs: logs}
 }
 
@@ -58,7 +64,11 @@ func (c *Core) BuildConfig(sub string, s Settings) string {
 	fmt.Fprintf(&b, "secret: %q\n", s.Secret)
 	fmt.Fprintf(&b, "mode: %s\n", s.Mode)
 	fmt.Fprintf(&b, "log-level: %s\n", s.LogLevel)
-	b.WriteString(applyGroupTuning(clean, s.AutoTune, s.AutoTuneInterval))
+	tuned, skipped := applyGroupTuning(clean, s.AutoTune, s.AutoTuneInterval)
+	if skipped {
+		c.logf("策略组是 YAML flow 且无法解析为 JSON（键可能未加引号），已跳过自动测速调优")
+	}
+	b.WriteString(tuned)
 	return b.String()
 }
 
@@ -86,11 +96,24 @@ func (c *Core) Validate(cfg string) error {
 }
 
 func (c *Core) validateOnce(cfg string) error {
-	tmp := filepath.Join(c.dataDir, "config.check.yaml")
-	if err := os.WriteFile(tmp, []byte(cfg), 0o600); err != nil {
+	// 每次校验用独立临时文件，避免并发校验（设置保存/订阅更新）互相覆盖。
+	f, err := os.CreateTemp(c.dataDir, "config.check-*.yaml")
+	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	defer os.Remove(tmp)
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.WriteString(cfg); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, c.corePath(), "-t", "-d", c.dataDir, "-f", tmp).CombinedOutput()
@@ -110,10 +133,14 @@ func (c *Core) SyncConfig(s Settings) error {
 	if err := c.Validate(cfg); err != nil {
 		return err
 	}
-	return os.WriteFile(c.configPath(), []byte(cfg), 0o600)
+	return writeFileAtomic(c.configPath(), []byte(cfg), 0o600)
 }
 
 func (c *Core) Start(s Settings) error {
+	// 先确认配置存在，再停止现有内核，避免误停正在运行的内核。
+	if _, err := os.Stat(c.configPath()); err != nil {
+		return fmt.Errorf("缺少配置文件，请先更新订阅")
+	}
 	// 已存在的配置在启动前也确保地理数据齐全，避免内核运行时再走慢速下载。
 	if cfg, err := os.ReadFile(c.configPath()); err == nil {
 		if err := c.ensureGeoData(string(cfg)); err != nil {
@@ -123,18 +150,15 @@ func (c *Core) Start(s Settings) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stopLocked()
-	if _, err := os.Stat(c.configPath()); err != nil {
-		return fmt.Errorf("缺少配置文件，请先更新订阅")
-	}
-	logf, err := os.OpenFile(c.logPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	logw, err := newRotatingWriter(c.logPath(), coreLogMax)
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command(c.corePath(), "-d", c.dataDir, "-f", c.configPath())
-	cmd.Stdout = logf
-	cmd.Stderr = logf
+	cmd.Stdout = logw
+	cmd.Stderr = logw
 	if err := cmd.Start(); err != nil {
-		logf.Close()
+		logw.Close()
 		return fmt.Errorf("启动内核失败：%v", err)
 	}
 	done := make(chan struct{})
@@ -143,7 +167,7 @@ func (c *Core) Start(s Settings) error {
 	c.startedAt = time.Now()
 	go func() {
 		_ = cmd.Wait()
-		logf.Close()
+		logw.Close()
 		close(done)
 	}()
 	return nil
@@ -268,18 +292,29 @@ func (c *Core) WaitReady(timeout time.Duration) error {
 	return fmt.Errorf("内核启动超时，请查看日志")
 }
 
+var reProxyGroups = regexp.MustCompile(`(?m)^proxy-groups:[ \t]*`)
+
 // applyGroupTuning 覆盖 url-test 组的测速间隔，并过滤信息节点。
-// 仅处理 flow 风格（proxy-groups: [...]）的订阅，块状 YAML 原样返回。
-func applyGroupTuning(text string, tune bool, interval int) string {
-	re := regexp.MustCompile(`(?m)^proxy-groups:[ \t]*(\[.*\])[ \t]*$`)
-	loc := re.FindStringSubmatchIndex(text)
+// 支持单行/多行的 flow 风格（proxy-groups: [...]），但要求内容兼容 JSON；
+// 块状 YAML 或键未加引号的 YAML flow 会原样返回，并通过第二个返回值提示调用方。
+func applyGroupTuning(text string, tune bool, interval int) (string, bool) {
+	loc := reProxyGroups.FindStringIndex(text)
 	if loc == nil {
-		return text
+		return text, false
 	}
-	arr := text[loc[2]:loc[3]]
+	raw := text[loc[1]:]
+	lead := len(raw) - len(strings.TrimLeft(raw, " \t\r\n"))
+	rest := raw[lead:]
+	if !strings.HasPrefix(rest, "[") {
+		return text, false
+	}
+	end := flowArrayEnd(rest)
+	if end < 0 {
+		return text, false
+	}
 	var groups []map[string]any
-	if err := json.Unmarshal([]byte(arr), &groups); err != nil {
-		return text
+	if err := json.Unmarshal([]byte(rest[:end]), &groups); err != nil {
+		return text, tune
 	}
 	for _, g := range groups {
 		if names, ok := g["proxies"].([]any); ok {
@@ -307,7 +342,41 @@ func applyGroupTuning(text string, tune bool, interval int) string {
 	}
 	out, err := json.Marshal(groups)
 	if err != nil {
-		return text
+		return text, tune
 	}
-	return text[:loc[2]] + string(out) + text[loc[3]:]
+	return text[:loc[1]+lead] + string(out) + rest[end:], false
+}
+
+// flowArrayEnd 返回从 s 开头（应为 '['）算起的 flow 数组结束位置（含 ']'）。
+// 找不到时返回 -1；字符串内的括号不参与计数。
+func flowArrayEnd(s string) int {
+	depth := 0
+	inStr, esc := false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+			} else if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
 }
